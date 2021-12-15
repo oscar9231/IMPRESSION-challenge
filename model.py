@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
 import os
 import csv
 import numpy as np
@@ -44,20 +41,28 @@ for file in range(40):
 # print(len(feats_sti), len(feats_sti[0]))
 # print(len(labels), len(labels[0]))
 
-x_train = feats_par[:44922]
-x_test = feats_par[44923:]
-y_train = labels[]
-y_test = labels[]
+label_range = max(labels) - min(labels) + 1
+print(label_range)
 
-x_train -= np.mean(x_train, axis = 0)
-x_train /= np.std(x_train, axis = 0)
+x_train_valid = np.array(feats_par[:44922])
+x_test = np.array(feats_par[44922:])
+y_train_valid = np.array(labels[:44922])
+y_test = np.array(labels[44922:])
+
+indices = np.arange(len(x_train_valid)
+random.shuffle(indices)
+x_train_valid[np.arange(len(x_train_valid)] = x_train_valid[indices]
+y_train_valid[np.arange(len(y_train_valid)] = y_train_valid[indices]
+
+x_train_valid -= np.mean(x_train_valid, axis = 0)
+x_train_valid /= np.std(x_train_valid, axis = 0)
 x_test -= np.mean(x_test, axis = 0)
 x_test /= np.std(x_test, axis = 0)
 
-indices = np.arange(len(x_train))
-random.shuffle(indices)
-x_train[np.arange(len(x_train))] = x_train[indices]
-y_train[np.arange(len(y_train))] = y_train[indices]
+x_train = x_train_valid[:int(0.8*len(x_train_valid))]
+x_valid = x_train_valid[int(0.8*len(x_train_valid)):]
+y_train = y_train_valid[:int(0.8*len(y_train_valid))]
+y_test = y_train_valid[int(0.8*len(y_train_valid)):]
 
 print('Data preparation completed!')
 
@@ -67,7 +72,7 @@ class NeuralNet(nn.Module):
         super(NeuralNet, self).__init__()
         self.conv1 = nn.Sequential(
             nn.Conv1d(in_channels=len(feats_sti[0]),
-                            out_channels=64,
+                            out_channels=128,
                             kernel_size=3,
                             stride=2,
                             padding=0),
@@ -76,12 +81,18 @@ class NeuralNet(nn.Module):
             nn.MaxPool1d(kernel_size=2)
         )
         self.conv2 = nn.Sequential(
-            nn.Conv1d(64,32,3,2,0),
+            nn.Conv1d(128,64,3,2,0),
             nn.BatchNorm1d(16),
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=2)
         )
-        self.lstm = nn.LSTM(input_size=200,
+        self.lstm1 = nn.LSTM(input_size=64,
+                            hidden_size=32,
+                            num_layers=2,
+                            batch_first=True,
+                            dropout=0.2,
+                            bidirectional=True)
+        self.lstm2 = nn.LSTM(input_size=len(feats_par[0]),
                             hidden_size=32,
                             num_layers=2,
                             batch_first=True,
@@ -90,9 +101,9 @@ class NeuralNet(nn.Module):
         self.attn = nn.MultiheadAttention(64, 8, batch_first=True)
         self.dense = nn.Linear(64, 16)
         self.acti = nn.ReLU()
-        self.out = nn.Linear(16, 4)
+        self.out = nn.Linear(16, label_range)
 
-    def forward(self, x):
+    def forward(self, x_sti, x_par):
         x = self.conv1(x)
         x = self.conv2(x)
         self.lstm.flatten_parameters()
@@ -104,11 +115,10 @@ class NeuralNet(nn.Module):
         x = self.out(x)
         return x
 #
-#
 model = NeuralNet()
 # model = model.to(torch.float64)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
-func = nn.CrossEntropyLoss()
+func = nn.MSELoss()
 
 epochs = 100
 epoch = 0
@@ -130,16 +140,20 @@ while epoch < epochs:
     print('--training begins--')
     model.train()
     j = 0
-    while j < len(names_train) / batch_size:
-        if (j + 1) * batch_size > len(names_train):
-            input_values = feats_train[j * batch_size:]
-            emolabels = emolabels_train[j * batch_size:]
+    input_sti = []
+    while j < len(x_train) / batch_size:
+        if (j + 1) * batch_size > len(x_train):
+            input_values = x_train[j * batch_size:]
+            input_labels = y_train[j * batch_size:]
         else:
-            input_values = feats_train[j * batch_size:(j + 1) * batch_size]
-            emolabels = emolabels_train[j * batch_size:(j + 1) * batch_size]
+            input_values = x_train[j * batch_size:(j + 1) * batch_size]
+            input_labels = y_train[j * batch_size:(j + 1) * batch_size]
+        for row in input_values:
+            ind = input_values[:-1]
+            input_sti.append(feats_sti[ind])
 
-        # ser loss
-        pred = ser_model(input_values)
+        # loss
+        pred = model(input_values, input_sti)
         train_ser_loss = func(pred, torch.tensor(emolabels))
         ser_loss_list_train.append(train_ser_loss.item())
         for i in pred:
