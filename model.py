@@ -14,55 +14,71 @@ with open('/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/feats_stim
     feats_sti = list(file_content)
 
 feats_par = []
-labels = []
+# feats_phy = []
+ind = []
+comp = []
+warm = []
 
 path_feats = '/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/feats_participant/'
 path_labels = '/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/labels/'
 
 os.chdir(path_feats)
-for file in range(40):
+for file in range(39):
     print(file)
     with open(file + '.csv') as par:
         file_content = csv.reader(par, delimiter=',')
         headers = next(file_content, None)
         for row in list(file_content):
-            feats_par.append(row)
+            feats_par.append(row[:-1])
+            ind.append(row[-1])
 
 os.chdir(path_labels)
-for file in range(40):
+for file in range(39):
     print(file)
     with open(file + '.csv') as label:
         file_content = csv.reader(label, delimiter=',')
         headers = next(file_content, None)
         for row in list(file_content):
-            labels.append(row)
+            comp.append(row[0])
+            warm.append(row[1])
 
 # print(len(feats_par), len(feats_par[0]))
 # print(len(feats_sti), len(feats_sti[0]))
-# print(len(labels), len(labels[0]))
+# print(len(comp), len(comp[0]))
 
-label_range = max(labels) - min(labels) + 1
-print(label_range)
+range_comp = max(comp) - min(comp) + 1
+range_warm = max(warm) - min(warm) + 1
+print(range_comp, range_warm)
 
-x_train_valid = np.array(feats_par[:44922])
-x_test = np.array(feats_par[44922:])
-y_train_valid = np.array(labels[:44922])
-y_test = np.array(labels[44922:])
+# separation for test data
+feats_train_valid = np.array(feats_par)
+# feats_test = np.array(feats_par[44922:])
+comp_train_valid = np.array(comp)
+# comp_test = np.array(comp[44922:])
+warm_train_valid = np.array(warm)
+# warm_test = np.array(warm[44922:])
 
-indices = np.arange(len(x_train_valid)
+# shuffle data
+leng = len(feats_train_valid)
+indices = np.arange(leng)
 random.shuffle(indices)
-x_train_valid[np.arange(len(x_train_valid)] = x_train_valid[indices]
-y_train_valid[np.arange(len(y_train_valid)] = y_train_valid[indices]
+feats_train_valid[np.arange(leng)] = feats_train_valid[indices]
+comp_train_valid[np.arange(leng)] = comp_train_valid[indices]
+warm_train_valid[np.arange(leng)] = warm_train_valid[indices]
 
-x_train_valid -= np.mean(x_train_valid, axis = 0)
-x_train_valid /= np.std(x_train_valid, axis = 0)
-x_test -= np.mean(x_test, axis = 0)
-x_test /= np.std(x_test, axis = 0)
+# separate training and validation data
+feats_train = feats_train_valid[:int(0.8*leng)]
+feats_valid = feats_train_valid[int(0.8*leng):]
+comp_train = comp_train_valid[:int(0.8*leng)]
+comp_valid = comp_train_valid[int(0.8*leng):]
+warm_train = warm_train_valid[:int(0.8*leng)]
+warm_valid = warm_train_valid[int(0.8*leng):]
 
-x_train = x_train_valid[:int(0.8*len(x_train_valid))]
-x_valid = x_train_valid[int(0.8*len(x_train_valid)):]
-y_train = y_train_valid[:int(0.8*len(y_train_valid))]
-y_test = y_train_valid[int(0.8*len(y_train_valid)):]
+# normalization
+feats_train -= np.mean(feats_train, axis = 0)
+feats_train /= np.std(feats_train, axis = 0)
+feats_valid -= np.mean(feats_valid, axis = 0)
+feats_valid /= np.std(feats_valid, axis = 0)
 
 print('Data preparation completed!')
 
@@ -70,49 +86,56 @@ print('Data preparation completed!')
 class NeuralNet(nn.Module):
     def __init__(self):
         super(NeuralNet, self).__init__()
-        self.conv1 = nn.Sequential(
+        self.conv = nn.Sequential(
             nn.Conv1d(in_channels=len(feats_sti[0]),
-                            out_channels=128,
-                            kernel_size=3,
-                            stride=2,
-                            padding=0),
-            nn.BatchNorm1d(16),
+                      out_channels=64,
+                      kernel_size=3,
+                      stride=1,
+                      padding=1),
+            # nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=64,
+                      out_channels=64,
+                      kernel_size=3,
+                      stride=1,
+                      padding=1),
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=2)
         )
-        self.conv2 = nn.Sequential(
-            nn.Conv1d(128,64,3,2,0),
-            nn.BatchNorm1d(16),
-            nn.ReLU(),
-            nn.MaxPool1d(kernel_size=2)
-        )
-        self.lstm1 = nn.LSTM(input_size=64,
+
+        self.lstm1 = nn.LSTM(input_size=len(feats_par[0]),
                             hidden_size=32,
                             num_layers=2,
                             batch_first=True,
-                            dropout=0.2,
                             bidirectional=True)
-        self.lstm2 = nn.LSTM(input_size=len(feats_par[0]),
+
+        self.lstm2 = nn.LSTM(input_size=len(feats_sti[0]),
                             hidden_size=32,
                             num_layers=2,
                             batch_first=True,
-                            dropout=0.2,
                             bidirectional=True)
+
         self.attn = nn.MultiheadAttention(64, 8, batch_first=True)
         self.dense = nn.Linear(64, 16)
         self.acti = nn.ReLU()
-        self.out = nn.Linear(16, label_range)
+        self.drop = nn.Dropout(p=0.5)
+        self.out1 = nn.Linear(16, range_comp)
+        self.out2 = nn.Linear(16, range_warm)
 
-    def forward(self, x_sti, x_par):
-        x = self.conv1(x)
-        x = self.conv2(x)
-        self.lstm.flatten_parameters()
-        x, _ = self.lstm(x)
-        x, _ = self.attn(x, x, x)
-        x = x.mean(dim=1)  # pooling
-        x = self.dense(x)
-        x = self.acti(x)
-        x = self.out(x)
+    def forward(self, input_par, input_sti):
+        x_par = self.conv1(input_par)
+        x_sti = self.conv1(input_sti)
+        self.lstm1.flatten_parameters()
+        self.lstm2.flatten_parameters()
+        x_par, _ = self.lstm1(x_par)
+        x_sti, _ = self.lstm2(x_sti)
+        x_par, _ = self.attn(x_par, x_par, x_par)
+        x_sti, _ = self.attn(x_sti, x_sti, x_sti)
+
+        # x = x.mean(dim=1)  # pooling
+        # x = self.dense(x)
+        # x = self.acti(x)
+        comp = self.out1(x)
         return x
 #
 model = NeuralNet()
@@ -129,18 +152,22 @@ while epoch < epochs:
     start = timeit.default_timer()
     print("-----epoch: ", epoch, "-----")
     comp_loss_list_train = []
-    comp_loss_list_test = []
+    comp_loss_list_valid = []
     warm_loss_list_train = []
-    warm_loss_list_test = []
+    warm_loss_list_valid = []
     comp_predictions_train = []
-    comp_predictions_test = []
+    comp_predictions_valid = []
     warm_predictions_train = []
-    warm_predictions_test = []
+    warm_predictions_valid = []
 
     print('--training begins--')
     model.train()
     j = 0
+    input_par = []
+    # input_phy = []
     input_sti = []
+    competence = []
+    warmth = []
     while j < len(x_train) / batch_size:
         if (j + 1) * batch_size > len(x_train):
             input_values = x_train[j * batch_size:]
@@ -149,13 +176,19 @@ while epoch < epochs:
             input_values = x_train[j * batch_size:(j + 1) * batch_size]
             input_labels = y_train[j * batch_size:(j + 1) * batch_size]
         for row in input_values:
-            ind = input_values[:-1]
+            ind = row[-1]
             input_sti.append(feats_sti[ind])
+            input_par.append(row[:-1])
+            # input_par.append(row[:-10])
+            # input_phy.append(row[-10:-1])
+        for row in input_labels:
+            competence.append(row[0])
+            warmth.append(row[1])
 
         # loss
-        pred = model(input_values, input_sti)
-        train_ser_loss = func(pred, torch.tensor(emolabels))
-        ser_loss_list_train.append(train_ser_loss.item())
+        pred = model(input_sti, input_par)
+        train_loss_comp = func(pred, torch.tensor(emolabels))
+        comp_loss_list_train.append(train_ser_loss.item())
         for i in pred:
             predictions_train.append(i.detach().numpy)
         j += 1
