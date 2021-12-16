@@ -116,11 +116,11 @@ class NeuralNet(nn.Module):
                             bidirectional=True)
 
         self.attn = nn.MultiheadAttention(64, 8, batch_first=True)
-        self.dense = nn.Linear(64, 16)
+        self.dense = nn.Linear(128, 32)
         self.acti = nn.ReLU()
         self.drop = nn.Dropout(p=0.5)
-        self.out1 = nn.Linear(16, range_comp)
-        self.out2 = nn.Linear(16, range_warm)
+        self.out1 = nn.Linear(32, range_comp)
+        self.out2 = nn.Linear(32, range_warm)
 
     def forward(self, input_par, input_sti):
         x_par = self.conv1(input_par)
@@ -131,12 +131,17 @@ class NeuralNet(nn.Module):
         x_sti, _ = self.lstm2(x_sti)
         x_par, _ = self.attn(x_par, x_par, x_par)
         x_sti, _ = self.attn(x_sti, x_sti, x_sti)
-
+        x_par_sti = self.attn(x_par, x_sti, x_sti)
+        x_sti_par = self.attn(x_sti, x_par, x_par)
+        x_co = x_par_sti + x_sti_par
+        x_co.view(x_co.size(0), -1)
         # x = x.mean(dim=1)  # pooling
-        # x = self.dense(x)
-        # x = self.acti(x)
-        comp = self.out1(x)
-        return x
+        x_co = self.dense(x_co)
+        x_co = self.acti(x_co)
+        x_co = self.drop(x_co)
+        comp = self.out1(x_co)
+        warm = self.out2(x_co)
+        return comp, warm
 #
 model = NeuralNet()
 # model = model.to(torch.float64)
@@ -155,10 +160,10 @@ while epoch < epochs:
     comp_loss_list_valid = []
     warm_loss_list_train = []
     warm_loss_list_valid = []
-    comp_predictions_train = []
-    comp_predictions_valid = []
-    warm_predictions_train = []
-    warm_predictions_valid = []
+    comp_preds_train = []
+    comp_preds_valid = []
+    warm_preds_train = []
+    warm_preds_valid = []
 
     print('--training begins--')
     model.train()
@@ -166,8 +171,8 @@ while epoch < epochs:
     input_par = []
     # input_phy = []
     input_sti = []
-    competence = []
-    warmth = []
+    label_comp = []
+    label_warm = []
     while j < len(x_train) / batch_size:
         if (j + 1) * batch_size > len(x_train):
             input_values = x_train[j * batch_size:]
@@ -182,30 +187,38 @@ while epoch < epochs:
             # input_par.append(row[:-10])
             # input_phy.append(row[-10:-1])
         for row in input_labels:
-            competence.append(row[0])
-            warmth.append(row[1])
+            label_comp.append(row[0])
+            label_warm.append(row[1])
 
         # loss
-        pred = model(input_sti, input_par)
-        train_loss_comp = func(pred, torch.tensor(emolabels))
-        comp_loss_list_train.append(train_ser_loss.item())
-        for i in pred:
-            predictions_train.append(i.detach().numpy)
+        preds_comp, preds_warm = model(input_sti, input_par)
+        train_loss_comp = func(pred_comp, label_comp)
+        train_loss_warm = func(pred_warm, label_warm)
+        comp_loss_list_train.append(train_loss_comp)
+        warm_loss_list_train.append(train_loss_warm)
+        for i in preds_comp:
+            comp_preds_train.append(i)
+        for i in preds_warm:
+            warm_preds_train.append(i)
         j += 1
 
         # backprop
         optimizer.zero_grad()
-        torch.nn.utils.clip_grad_norm_(ser_model.parameters(), 5.0)
-        train_ser_loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        train_loss = 0.5*(comp_loss_list_train/len(comp_loss_list_train)) \
+                     + 0.5*(warm_loss_list_train/len(warm_loss_list_train))
+        train_loss.backward()
         optimizer.step()
-        torch.cuda.empty_cache()
+        # torch.cuda.empty_cache()
 
     print('--training ends--')
+
+# tomorrow from here
 
     # testing
     # extract features
     print('--testing begins--')
-    ser_model.eval()
+    model.eval()
     k = 0
     while k < len(names_test):
         emo = []
