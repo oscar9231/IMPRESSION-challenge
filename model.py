@@ -1,11 +1,13 @@
 import os
 import csv
-import numpy as np
 import torch
 import torch.nn as nn
+import numpy as np
 import random
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 import timeit
+from audtorch.metrics.functional import concordance_cc
+
+torch.manual_seed(1)
 
 # data preparation
 with open('/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/feats_stimuli/sti.csv') as sti:
@@ -171,29 +173,28 @@ while epoch < epochs:
     input_par = []
     # input_phy = []
     input_sti = []
-    label_comp = []
-    label_warm = []
-    while j < len(x_train) / batch_size:
-        if (j + 1) * batch_size > len(x_train):
-            input_values = x_train[j * batch_size:]
-            input_labels = y_train[j * batch_size:]
+    labels_comp = []
+    labels_warm = []
+    while j < len(feats_train) / batch_size:
+        if (j + 1) * batch_size > len(feats_train):
+            input_values = feats_train[j * batch_size:]
+            labels_comp = comp_train[j * batch_size:]
+            labels_warm = warm_train[j * batch_size:]
         else:
-            input_values = x_train[j * batch_size:(j + 1) * batch_size]
-            input_labels = y_train[j * batch_size:(j + 1) * batch_size]
+            input_values = feats_train[j * batch_size:(j + 1) * batch_size]
+            labels_comp = comp_train[j * batch_size:(j + 1) * batch_size]
+            labels_warm = warm_train[j * batch_size:(j + 1) * batch_size]
         for row in input_values:
             ind = row[-1]
             input_sti.append(feats_sti[ind])
             input_par.append(row[:-1])
             # input_par.append(row[:-10])
             # input_phy.append(row[-10:-1])
-        for row in input_labels:
-            label_comp.append(row[0])
-            label_warm.append(row[1])
 
         # loss
         preds_comp, preds_warm = model(input_sti, input_par)
-        train_loss_comp = func(pred_comp, label_comp)
-        train_loss_warm = func(pred_warm, label_warm)
+        train_loss_comp = func(preds_comp, labels_comp)
+        train_loss_warm = func(preds_warm, labels_warm)
         comp_loss_list_train.append(train_loss_comp)
         warm_loss_list_train.append(train_loss_warm)
         for i in preds_comp:
@@ -205,55 +206,57 @@ while epoch < epochs:
         # backprop
         optimizer.zero_grad()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        train_loss = 0.5*(comp_loss_list_train/len(comp_loss_list_train)) \
-                     + 0.5*(warm_loss_list_train/len(warm_loss_list_train))
+        train_loss = 0.5*(sum(comp_loss_list_train)/len(comp_loss_list_train)) \
+                     + 0.5*(sum(warm_loss_list_train)/len(warm_loss_list_train))
         train_loss.backward()
         optimizer.step()
         # torch.cuda.empty_cache()
 
     print('--training ends--')
 
-# tomorrow from here
 
-    # testing
+    # validation
     # extract features
-    print('--testing begins--')
+    print('--validation begins--')
     model.eval()
-    k = 0
-    while k < len(names_test):
-        emo = []
-        input_values = feats_test[k]
-
-        # ser loss
-        pred = ser_model(input_values.view(1, 300, 400))
-        emo.append(emolabels_test[k])
-        test_ser_loss = func(pred, torch.tensor(emo))
-        ser_loss_list_test.append(test_ser_loss.item())
-        predictions_test.append(pred.detach().numpy())
-        #         print("test_ser_loss:", test_ser_loss.item())
-
-        k += 1
+    input_values = feats_valid
+    for row in input_values:
+        ind = row[-1]
+        input_sti.append(feats_sti[ind])
+        input_par.append(row[:-1])
+    preds_comp, preds_warm = model(input_sti, input_par)
+    valid_loss_comp = func(preds_comp, comp_valid)
+    valid_loss_warm = func(preds_warm, warm_valid)
 
     # compute performance for each epoch
-    predictions_train = np.array(predictions_train)
-    predictions_test = np.array(predictions_test)
-    emolabels_train = np.array(emolabels_train)
-    emolabels_test = np.array(emolabels_test)
-    predictions_train = [np.argmax(p) for p in predictions_train]
-    acc_train = accuracy_score(emolabels_train, predictions_train)
-    predictions_test = [np.argmax(p) for p in predictions_test]
-    acc_test = accuracy_score(emolabels_test, predictions_test)
+    comp_preds_train = np.array(comp_preds_train)
+    warm_preds_train = np.array(warm_preds_train)
+    comp_preds_valid = np.array(comp_preds_valid)
+    warm_preds_valid = np.array(warm_preds_valid)
+    comp_train = np.array(comp_train)
+    warm_train = np.array(warm_train)
+    comp_valid = np.array(comp_valid)
+    warm_valid = np.array(warm_valid)
+    comp_preds_train = [np.argmax(p) for p in comp_preds_train]
+    warm_preds_train = [np.argmax(p) for p in warm_preds_train]
+    comp_preds_valid = [np.argmax(p) for p in comp_preds_valid]
+    warm_preds_valid = [np.argmax(p) for p in warm_preds_valid]
 
-    trainserloss = sum(ser_loss_list_train) / len(ser_loss_list_train)
-    testserloss = sum(ser_loss_list_test) / len(ser_loss_list_test)
+    train_ccc_comp = concordance_cc(comp_preds_train, comp_train)
+    train_ccc_warm = concordance_cc(warm_preds_train, warm_train)
+    valid_ccc_comp = concordance_cc(comp_preds_valid, comp_valid)
+    valid_ccc_warm = concordance_cc(warm_preds_valid, warm_valid)
 
-    print('Epoch:', epoch, '|[train]ser_loss: %.4f' % trainserloss, '|[train]accuracy: %.4f' % acc_train,
-          '|[test]ser_loss: %.4f' % testserloss, '|[test]accuracy: %.4f' % acc_test)
-    print('test: \n', confusion_matrix(emolabels_test, predictions_test))
-    print(classification_report(emolabels_test, predictions_test))
+    train_loss_comp = sum(comp_loss_list_train) / len(comp_loss_list_train)
+    train_loss_warm = sum(warm_loss_list_train) / len(warm_loss_list_train)
+
+    print('Epoch:', epoch, '|train_loss_comp: %.4f' % train_loss_comp, '|train_ccc_comp: %.4f' % train_ccc_comp,
+          '|train_loss_warm: %.4f' % train_loss_warm, '|train_ccc_warm: %.4f' % train_ccc_warm,
+          '|valid_loss_comp: %.4f' % valid_loss_comp, '|valid_ccc_comp: %.4f' % valid_ccc_comp,
+          '|valid_loss_warm: %.4f' % valid_loss_warm, '|valid_ccc_warm: %.4f' % valid_ccc_warm)
 
     epoch += 1
-    print('---testing ends---')
+    print('---validation ends---')
 
     stop = timeit.default_timer()
     print('Time: ', stop - start)
