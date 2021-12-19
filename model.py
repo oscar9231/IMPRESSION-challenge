@@ -24,7 +24,7 @@ path_labels = '/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/labels
 
 os.chdir(path_feats)
 for file in range(39):
-    print(file)
+#     print(file)
     with open(file + '.csv') as par:
         file_content = csv.reader(par, delimiter=',')
         headers = next(file_content, None)
@@ -34,7 +34,7 @@ for file in range(39):
 
 os.chdir(path_labels)
 for file in range(39):
-    print(file)
+#     print(file)
     with open(file + '.csv') as label:
         file_content = csv.reader(label, delimiter=',')
         headers = next(file_content, None)
@@ -48,8 +48,8 @@ for file in range(39):
 
 feats_par = np.array(feats_par, dtype=float)
 feats_sti = np.array(feats_sti, dtype=float)
-comp = np.array(comp, dtype=int)
-warm = np.array(warm, dtype=int)
+comp = np.array(comp, dtype=float)
+warm = np.array(warm, dtype=float)
 ind = np.array(ind, dtype=int)
 
 # range_comp = max(comp) - min(comp) + 1
