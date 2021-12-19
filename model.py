@@ -243,10 +243,10 @@ while epoch < epochs:
     warm_train = np.array(warm_train)
     comp_valid = np.array(comp_valid)
     warm_valid = np.array(warm_valid)
-    comp_preds_train = [np.argmax(p) for p in comp_preds_train]
-    warm_preds_train = [np.argmax(p) for p in warm_preds_train]
-    comp_preds_valid = [np.argmax(p) for p in comp_preds_valid]
-    warm_preds_valid = [np.argmax(p) for p in warm_preds_valid]
+#     comp_preds_train = [np.argmax(p) for p in comp_preds_train]
+#     warm_preds_train = [np.argmax(p) for p in warm_preds_train]
+#     comp_preds_valid = [np.argmax(p) for p in comp_preds_valid]
+#     warm_preds_valid = [np.argmax(p) for p in warm_preds_valid]
 
     train_ccc_comp = concordance_cc(comp_preds_train, comp_train)
     train_ccc_warm = concordance_cc(warm_preds_train, warm_train)
