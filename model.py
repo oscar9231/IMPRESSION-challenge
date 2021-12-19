@@ -127,8 +127,8 @@ class NeuralNet(nn.Module):
         self.dense = nn.Linear(128, 32)
         self.acti = nn.ReLU()
         self.drop = nn.Dropout(p=0.5)
-        self.out1 = nn.Linear(32, range_comp)
-        self.out2 = nn.Linear(32, range_warm)
+        self.out1 = nn.Linear(32, 1)
+        self.out2 = nn.Linear(32, 1)
 
     def forward(self, input_par, input_sti):
         x_par = self.conv1(input_par)
