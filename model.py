@@ -7,8 +7,6 @@ import random
 import timeit
 from audtorch.metrics.functional import concordance_cc
 
-torch.manual_seed(1)
-
 # data preparation
 with open('/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/feats_stimuli/sti.csv') as sti:
     file_content = csv.reader(sti, delimiter=',')
@@ -48,33 +46,41 @@ for file in range(39):
 # print(len(feats_sti), len(feats_sti[0]))
 # print(len(comp), len(comp[0]))
 
-range_comp = max(comp) - min(comp) + 1
-range_warm = max(warm) - min(warm) + 1
-print(range_comp, range_warm)
+feats_par = np.array(feats_par, dtype=float)
+feats_sti = np.array(feats_sti, dtype=float)
+comp = np.array(comp, dtype=int)
+warm = np.array(warm, dtype=int)
+ind = np.array(ind, dtype=int)
 
-# separation for test data
-feats_train_valid = np.array(feats_par)
+# range_comp = max(comp) - min(comp) + 1
+# range_warm = max(warm) - min(warm) + 1
+# print(range_comp, range_warm)
+
+## separation for test data
+# feats_par = np.array(feats_par)
 # feats_test = np.array(feats_par[44922:])
-comp_train_valid = np.array(comp)
+# comp_train_valid = np.array(comp)
 # comp_test = np.array(comp[44922:])
-warm_train_valid = np.array(warm)
+# warm_train_valid = np.array(warm)
 # warm_test = np.array(warm[44922:])
 
+torch.manual_seed(1)
+
 # shuffle data
-leng = len(feats_train_valid)
+leng = len(feats_par)
 indices = np.arange(leng)
 random.shuffle(indices)
-feats_train_valid[np.arange(leng)] = feats_train_valid[indices]
-comp_train_valid[np.arange(leng)] = comp_train_valid[indices]
-warm_train_valid[np.arange(leng)] = warm_train_valid[indices]
+feats_par[np.arange(leng)] = feats_par[indices]
+comp[np.arange(leng)] = comp[indices]
+warm[np.arange(leng)] = warm[indices]
 
 # separate training and validation data
-feats_train = feats_train_valid[:int(0.8*leng)]
-feats_valid = feats_train_valid[int(0.8*leng):]
-comp_train = comp_train_valid[:int(0.8*leng)]
-comp_valid = comp_train_valid[int(0.8*leng):]
-warm_train = warm_train_valid[:int(0.8*leng)]
-warm_valid = warm_train_valid[int(0.8*leng):]
+feats_train = feats_par[:int(0.8*leng)]
+feats_valid = feats_par[int(0.8*leng):]
+comp_train = comp[:int(0.8*leng)]
+comp_valid = comp[int(0.8*leng):]
+warm_train = warm[:int(0.8*leng)]
+warm_valid = warm[int(0.8*leng):]
 
 # normalization
 feats_train -= np.mean(feats_train, axis = 0)
@@ -260,3 +266,4 @@ while epoch < epochs:
 
     stop = timeit.default_timer()
     print('Time: ', stop - start)
+
