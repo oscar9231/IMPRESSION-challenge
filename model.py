@@ -83,6 +83,7 @@ warm_train = warm[:int(0.8*leng)]
 warm_valid = warm[int(0.8*leng):]
 
 # normalization
+np.seterr(divide='ignore', invalid='ignore') # avoid "divide by zero" or "divide by NaN"
 feats_train -= np.mean(feats_train, axis = 0)
 feats_train /= np.std(feats_train, axis = 0)
 feats_valid -= np.mean(feats_valid, axis = 0)
@@ -94,7 +95,23 @@ print('Data preparation completed!')
 class NeuralNet(nn.Module):
     def __init__(self):
         super(NeuralNet, self).__init__()
-        self.conv = nn.Sequential(
+        self.conv1 = nn.Sequential(
+            nn.Conv1d(in_channels=len(feats_par[0]),
+                      out_channels=64,
+                      kernel_size=3,
+                      stride=1,
+                      padding=1),
+            # nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.Conv1d(in_channels=64,
+                      out_channels=64,
+                      kernel_size=3,
+                      stride=1,
+                      padding=1),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2)
+        )
+        self.conv2 = nn.Sequential(
             nn.Conv1d(in_channels=len(feats_sti[0]),
                       out_channels=64,
                       kernel_size=3,
@@ -111,48 +128,47 @@ class NeuralNet(nn.Module):
             nn.MaxPool1d(kernel_size=2)
         )
 
-        self.lstm1 = nn.LSTM(input_size=len(feats_par[0]),
+        self.lstm1 = nn.LSTM(input_size=34,
                             hidden_size=32,
                             num_layers=2,
                             batch_first=True,
                             bidirectional=True)
-
-        self.lstm2 = nn.LSTM(input_size=len(feats_sti[0]),
+        self.lstm2 = nn.LSTM(input_size=206,
                             hidden_size=32,
                             num_layers=2,
                             batch_first=True,
                             bidirectional=True)
-
         self.attn = nn.MultiheadAttention(64, 8, batch_first=True)
-        self.dense = nn.Linear(128, 32)
+        self.dense = nn.Linear(64, 16)
         self.acti = nn.ReLU()
         self.drop = nn.Dropout(p=0.5)
-        self.out1 = nn.Linear(32, 1)
-        self.out2 = nn.Linear(32, 1)
+        self.out1 = nn.Linear(16, 1)
+        self.out2 = nn.Linear(16, 1)
 
     def forward(self, input_par, input_sti):
-        x_par = self.conv1(input_par)
-        x_sti = self.conv1(input_sti)
+#         x_par = self.conv1(input_par)
+#         x_sti = self.conv2(input_sti)
         self.lstm1.flatten_parameters()
         self.lstm2.flatten_parameters()
-        x_par, _ = self.lstm1(x_par)
-        x_sti, _ = self.lstm2(x_sti)
+        x_par, _ = self.lstm1(input_par)
+        x_sti, _ = self.lstm2(input_sti)
+        print(x_par)
         x_par, _ = self.attn(x_par, x_par, x_par)
         x_sti, _ = self.attn(x_sti, x_sti, x_sti)
-        x_par_sti = self.attn(x_par, x_sti, x_sti)
-        x_sti_par = self.attn(x_sti, x_par, x_par)
-        x_co = x_par_sti + x_sti_par
-        x_co.view(x_co.size(0), -1)
-        # x = x.mean(dim=1)  # pooling
+        x_par_sti, _ = self.attn(x_par, x_sti, x_sti)
+        x_sti_par, _ = self.attn(x_sti, x_par, x_par)
+        x_co = torch.cat((x_par_sti, x_sti_par), 1)
+#         x_co = x_co.view(x_co.size(0), -1)
+        x_co = x_co.mean(dim=1)  # pooling
         x_co = self.dense(x_co)
         x_co = self.acti(x_co)
         x_co = self.drop(x_co)
         comp = self.out1(x_co)
         warm = self.out2(x_co)
         return comp, warm
-#
+
 model = NeuralNet()
-# model = model.to(torch.float64)
+model = model.to(torch.float64)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
 func = nn.MSELoss()
 
@@ -176,44 +192,45 @@ while epoch < epochs:
     print('--training begins--')
     model.train()
     j = 0
-    input_par = []
-    # input_phy = []
-    input_sti = []
-    labels_comp = []
-    labels_warm = []
     while j < len(feats_train) / batch_size:
+        # input_phy = []
+        input_sti = []
         if (j + 1) * batch_size > len(feats_train):
-            input_values = feats_train[j * batch_size:]
+            input_par = feats_train[j * batch_size:]
             labels_comp = comp_train[j * batch_size:]
             labels_warm = warm_train[j * batch_size:]
+            ind_fusion = ind_train[j * batch_size:]
         else:
-            input_values = feats_train[j * batch_size:(j + 1) * batch_size]
+            input_par = feats_train[j * batch_size:(j + 1) * batch_size]
             labels_comp = comp_train[j * batch_size:(j + 1) * batch_size]
             labels_warm = warm_train[j * batch_size:(j + 1) * batch_size]
-        for row in input_values:
-            ind = row[-1]
+            ind_fusion = ind_train[j * batch_size:(j + 1) * batch_size]
+        for ind in ind_fusion:
             input_sti.append(feats_sti[ind])
-            input_par.append(row[:-1])
+            # input_par.append(feats_sti[ind])
             # input_par.append(row[:-10])
             # input_phy.append(row[-10:-1])
+        input_par = torch.tensor(input_par).reshape(input_par.shape[0], 1, input_par.shape[1])
+        input_sti = torch.tensor(input_sti).reshape(len(input_sti), 1, len(input_sti[0]))
 
         # loss
-        preds_comp, preds_warm = model(input_sti, input_par)
-        train_loss_comp = func(preds_comp, labels_comp)
-        train_loss_warm = func(preds_warm, labels_warm)
-        comp_loss_list_train.append(train_loss_comp)
-        warm_loss_list_train.append(train_loss_warm)
+        preds_comp, preds_warm = model(input_par, input_sti)
+#         print(preds_comp.detach(), preds_warm.detach())
+        train_loss_comp = func(preds_comp, torch.tensor(labels_comp))
+        train_loss_warm = func(preds_warm, torch.tensor(labels_warm))
+        comp_loss_list_train.append(train_loss_comp.item())
+        warm_loss_list_train.append(train_loss_warm.item())
         for i in preds_comp:
-            comp_preds_train.append(i)
+            comp_preds_train.append(i.detach().numpy())
         for i in preds_warm:
-            warm_preds_train.append(i)
+            warm_preds_train.append(i.detach().numpy())
         j += 1
 
         # backprop
         optimizer.zero_grad()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        train_loss = 0.5*(sum(comp_loss_list_train)/len(comp_loss_list_train)) \
-                     + 0.5*(sum(warm_loss_list_train)/len(warm_loss_list_train))
+        train_loss = 0.5*train_loss_comp + 0.5*train_loss_warm
+#         print(j, train_loss.item())
         train_loss.backward()
         optimizer.step()
         # torch.cuda.empty_cache()
@@ -225,14 +242,15 @@ while epoch < epochs:
     # extract features
     print('--validation begins--')
     model.eval()
-    input_values = feats_valid
-    for row in input_values:
-        ind = row[-1]
+    input_par = feats_valid
+    for ind in ind_valid:
         input_sti.append(feats_sti[ind])
-        input_par.append(row[:-1])
-    preds_comp, preds_warm = model(input_sti, input_par)
-    valid_loss_comp = func(preds_comp, comp_valid)
-    valid_loss_warm = func(preds_warm, warm_valid)
+    input_par = torch.tensor(input_par).reshape(input_par.shape[0], 1, input_par.shape[1])
+    input_sti = torch.tensor(input_sti).reshape(len(input_sti), 1, len(input_sti[0]))
+#         input_par.append(row[:-1])
+    preds_comp, preds_warm = model(input_par, input_sti)
+    valid_loss_comp = func(preds_comp, torch.tensor(comp_valid))
+    valid_loss_warm = func(preds_warm, torch.tensor(warm_valid))
 
     # compute performance for each epoch
     comp_preds_train = np.array(comp_preds_train)
@@ -266,4 +284,3 @@ while epoch < epochs:
 
     stop = timeit.default_timer()
     print('Time: ', stop - start)
-
