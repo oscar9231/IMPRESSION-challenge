@@ -26,7 +26,7 @@ path_labels = '/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/labels
 os.chdir(path_feats)
 for file in range(39):
 #     print(file)
-    with open(file + '.csv') as par:
+    with open(str(file) + '.csv') as par:
         file_content = csv.reader(par, delimiter=',')
         headers = next(file_content, None)
         for row in list(file_content):
@@ -36,7 +36,7 @@ for file in range(39):
 os.chdir(path_labels)
 for file in range(39):
 #     print(file)
-    with open(file + '.csv') as label:
+    with open(str(file) + '.csv') as label:
         file_content = csv.reader(label, delimiter=',')
         headers = next(file_content, None)
         for row in list(file_content):
@@ -86,9 +86,9 @@ warm_valid = warm[int(0.8*leng):]
 # normalization
 np.seterr(divide='ignore', invalid='ignore') # avoid "divide by zero" or "divide by NaN"
 feats_train -= np.mean(feats_train, axis = 0)
-feats_train /= (np.std(feats_train, axis = 0) + 0.01)
+feats_train /= (np.std(feats_train, axis = 0) + 0.001)
 feats_valid -= np.mean(feats_valid, axis = 0)
-feats_valid /= (np.std(feats_valid, axis = 0) + 0.01)
+feats_valid /= (np.std(feats_valid, axis = 0) + 0.001)
 
 feats_train = torch.from_numpy(feats_train)
 feats_valid = torch.from_numpy(feats_valid)
@@ -105,7 +105,9 @@ print(ind_train.size(), ind_valid.size())
 print(comp_train.size(), comp_valid.size(), warm_train.size(), warm_valid.size())
 
 trainset = TensorDataset(feats_train, ind_train, comp_train, warm_train)
-traindata = DataLoader(dataset=trainset, batch_size=64, shuffle=True)
+validset = TensorDataset(feats_valid, ind_valid, comp_valid, warm_valid)
+traindata = DataLoader(dataset=trainset, batch_size=64, shuffle=False)
+validdata = DataLoader(dataset=validset, batch_size=64, shuffle=False)
 
 print('Data preparation completed!')
 
@@ -187,12 +189,8 @@ class NeuralNet(nn.Module):
 
 model = NeuralNet()
 model = model.to(torch.float64)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-2, weight_decay=1e-5)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
 func = nn.MSELoss()
-
-epochs = 100
-epoch = 0
-batch_size = 6400
 
 # training
 for epoch in range(100):
@@ -218,14 +216,14 @@ for epoch in range(100):
     
         # loss
         preds_comp, preds_warm = model(input_par, input_sti)
-        train_loss_comp = func(preds_comp, labels_comp)
-        train_loss_warm = func(preds_warm, labels_warm)
+        train_loss_comp = func(preds_comp.squeeze(), labels_comp)
+        train_loss_warm = func(preds_warm.squeeze(), labels_warm)
         comp_loss_list_train.append(train_loss_comp.item())
         warm_loss_list_train.append(train_loss_warm.item())
         for i in preds_comp:
-            comp_preds_train.append(i.detach().numpy())
+            comp_preds_train.append(i.item())
         for i in preds_warm:
-            warm_preds_train.append(i.detach().numpy())
+            warm_preds_train.append(i.item())
 
         # backprop
         optimizer.zero_grad()
@@ -233,12 +231,61 @@ for epoch in range(100):
         train_loss = 0.5*train_loss_comp + 0.5*train_loss_warm
         train_loss.backward()
         optimizer.step()
-        # torch.cuda.empty_cache()
-
     print('--training ends--')
+
+    # validation
+    print('--validation begins--')
+    model.eval()
+    input_par = feats_valid
+    input_sti = torch.tensor([])
+    for input_par, inds, labels_comp, labels_warm in validdata:
+        input_sti = torch.tensor([])
+        for inde in inds:
+            input_sti = torch.cat((input_sti, feats_sti[inde]), 0)
+        input_par = input_par.reshape(input_par.shape[0], 1, input_par.shape[1])
+        input_sti = input_sti.reshape(input_par.shape[0], 1, -1)
+        # loss
+        preds_comp, preds_warm = model(input_par, input_sti)
+        valid_loss_comp = func(preds_comp.squeeze(), labels_comp)
+        valid_loss_warm = func(preds_warm.squeeze(), labels_warm)
+        comp_loss_list_valid.append(valid_loss_comp.item())
+        warm_loss_list_valid.append(valid_loss_warm.item())
+        for i in preds_comp:
+            comp_preds_valid.append(i.item())
+        for i in preds_warm:
+            warm_preds_valid.append(i.item())
+
+    # compute performance for each epoch
+    comp_preds_train = torch.tensor(comp_preds_train)
+    warm_preds_train = torch.tensor(warm_preds_train)
+    comp_preds_valid = torch.tensor(comp_preds_valid)
+    warm_preds_valid = torch.tensor(warm_preds_valid)
+
+    train_ccc_comp = concordance_cc(comp_preds_train, comp_train)
+    train_ccc_warm = concordance_cc(warm_preds_train, warm_train)
+    valid_ccc_comp = concordance_cc(comp_preds_valid, comp_valid)
+    valid_ccc_warm = concordance_cc(warm_preds_valid, warm_valid)
+
+    train_loss_comp = sum(comp_loss_list_train) / len(comp_loss_list_train)
+    train_loss_warm = sum(warm_loss_list_train) / len(warm_loss_list_train)
+    valid_loss_comp = sum(comp_loss_list_valid) / len(comp_loss_list_valid)
+    valid_loss_warm = sum(warm_loss_list_valid) / len(warm_loss_list_valid)
+
+    print('train_loss_comp: %.4f' % train_loss_comp, '|train_ccc_comp: %.4f' % train_ccc_comp, '\n'
+          'train_loss_warm: %.4f' % train_loss_warm, '|train_ccc_warm: %.4f' % train_ccc_warm, '\n'
+          'valid_loss_comp: %.4f' % valid_loss_comp, '|valid_ccc_comp: %.4f' % valid_ccc_comp, '\n'
+          'valid_loss_warm: %.4f' % valid_loss_warm, '|valid_ccc_warm: %.4f' % valid_ccc_warm)
+
+    print('---validation ends---')
+
+    stop = timeit.default_timer()
+    print('Time: ', stop - start)
     
     
 # # training
+# epoch = 100
+# batch_size = 64
+
 # while epoch < epochs:
 #     start = timeit.default_timer()
 #     print("-----epoch: ", epoch, "-----")
@@ -299,49 +346,3 @@ for epoch in range(100):
 #         # torch.cuda.empty_cache()
 
 #     print('--training ends--')
-
-
-    # validation
-    print('--validation begins--')
-    model.eval()
-    input_par = feats_valid
-    input_sti = torch.tensor([])
-    for inde in ind_valid:
-        input_sti = torch.cat((input_sti, feats_sti[inde]), 0)
-    input_par = input_par.reshape(input_par.shape[0], 1, input_par.shape[1])
-    input_sti = input_sti.reshape(input_par.shape[0], 1, -1)
-    preds_comp, preds_warm = model(input_par, input_sti)
-    valid_loss_comp = func(preds_comp, comp_valid)
-    valid_loss_warm = func(preds_warm, warm_valid)
-
-    # compute performance for each epoch
-    comp_preds_train = np.array(comp_preds_train)
-    warm_preds_train = np.array(warm_preds_train)
-    comp_preds_valid = np.array(comp_preds_valid)
-    warm_preds_valid = np.array(warm_preds_valid)
-    comp_train = np.array(comp_train)
-    warm_train = np.array(warm_train)
-    comp_valid = np.array(comp_valid)
-    warm_valid = np.array(warm_valid)
-#     comp_preds_train = [np.argmax(p) for p in comp_preds_train]
-#     warm_preds_train = [np.argmax(p) for p in warm_preds_train]
-#     comp_preds_valid = [np.argmax(p) for p in comp_preds_valid]
-#     warm_preds_valid = [np.argmax(p) for p in warm_preds_valid]
-
-    train_ccc_comp = concordance_cc(comp_preds_train, comp_train)
-    train_ccc_warm = concordance_cc(warm_preds_train, warm_train)
-    valid_ccc_comp = concordance_cc(comp_preds_valid, comp_valid)
-    valid_ccc_warm = concordance_cc(warm_preds_valid, warm_valid)
-
-    train_loss_comp = sum(comp_loss_list_train) / len(comp_loss_list_train)
-    train_loss_warm = sum(warm_loss_list_train) / len(warm_loss_list_train)
-
-    print('Epoch:', epoch, '|train_loss_comp: %.4f' % train_loss_comp, '|train_ccc_comp: %.4f' % train_ccc_comp,
-          '|train_loss_warm: %.4f' % train_loss_warm, '|train_ccc_warm: %.4f' % train_ccc_warm,
-          '|valid_loss_comp: %.4f' % valid_loss_comp, '|valid_ccc_comp: %.4f' % valid_ccc_comp,
-          '|valid_loss_warm: %.4f' % valid_loss_warm, '|valid_ccc_warm: %.4f' % valid_ccc_warm)
-
-    print('---validation ends---')
-
-    stop = timeit.default_timer()
-    print('Time: ', stop - start)
