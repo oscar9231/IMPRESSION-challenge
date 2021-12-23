@@ -237,7 +237,6 @@ for epoch in range(100):
     print('--validation begins--')
     model.eval()
     input_par = feats_valid
-    input_sti = torch.tensor([])
     for input_par, inds, labels_comp, labels_warm in validdata:
         input_sti = torch.tensor([])
         for inde in inds:
