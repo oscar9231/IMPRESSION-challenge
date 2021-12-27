@@ -5,6 +5,7 @@ import random
 import timeit
 import numpy as np
 import torch.nn as nn
+import torch.optim as optim
 from audtorch.metrics.functional import concordance_cc
 from torch.utils.data import TensorDataset, DataLoader
 
@@ -24,7 +25,7 @@ path_feats = '/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/feats_p
 path_labels = '/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/labels/'
 
 os.chdir(path_feats)
-for file in range(39):
+for file in range(40):
 #     print(file)
     with open(str(file) + '.csv') as par:
         file_content = csv.reader(par, delimiter=',')
@@ -34,7 +35,7 @@ for file in range(39):
             ind.append(row[-1])
 
 os.chdir(path_labels)
-for file in range(39):
+for file in range(40):
 #     print(file)
     with open(str(file) + '.csv') as label:
         file_content = csv.reader(label, delimiter=',')
@@ -149,47 +150,48 @@ class NeuralNet(nn.Module):
             nn.MaxPool1d(kernel_size=2)
         )
 
-        self.lstm1 = nn.LSTM(input_size=34,
-                            hidden_size=32,
+        self.lstm1 = nn.LSTM(input_size=len(feats_par[0]),
+                            hidden_size=64,
                             num_layers=2,
                             batch_first=True,
                             bidirectional=True)
-        self.lstm2 = nn.LSTM(input_size=206,
-                            hidden_size=32,
+        self.lstm2 = nn.LSTM(input_size=len(feats_sti[0]),
+                            hidden_size=64,
                             num_layers=2,
                             batch_first=True,
                             bidirectional=True)
-        self.attn = nn.MultiheadAttention(64, 8, batch_first=True)
-        self.dense = nn.Linear(64, 16)
+        self.attn = nn.MultiheadAttention(128, 8, batch_first=True)
+        self.dense = nn.Linear(128, 16)
         self.acti = nn.ReLU()
         self.drop = nn.Dropout(p=0.5)
-        self.out1 = nn.Linear(16, 1)
-        self.out2 = nn.Linear(16, 1)
+        self.out = nn.Linear(16, 1)
 
     def forward(self, input_par, input_sti):
-#         x_par = self.conv1(input_par)
-#         x_sti = self.conv2(input_sti)
+        # lstm
         self.lstm1.flatten_parameters()
         self.lstm2.flatten_parameters()
         x_par, _ = self.lstm1(input_par)
         x_sti, _ = self.lstm2(input_sti)
+        # attention
         x_par, _ = self.attn(x_par, x_par, x_par)
         x_sti, _ = self.attn(x_sti, x_sti, x_sti)
         x_par_sti, _ = self.attn(x_par, x_sti, x_sti)
         x_sti_par, _ = self.attn(x_sti, x_par, x_par)
-        x_co = torch.cat((x_par_sti, x_sti_par), 1)
+        # concatenation
+        x_co = torch.cat((x_par, x_sti, x_par_sti, x_sti_par), 1)
 #         x_co = x_co.view(x_co.size(0), -1)
         x_co = x_co.mean(dim=1)  # pooling
         x_co = self.dense(x_co)
         x_co = self.acti(x_co)
         x_co = self.drop(x_co)
-        comp = self.out1(x_co)
-        warm = self.out2(x_co)
+        comp = self.out(x_co)
+        warm = self.out(x_co)
         return comp, warm
 
 model = NeuralNet()
 model = model.to(torch.float64)
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=25, gamma=0.5)
 func = nn.MSELoss()
 
 # training
@@ -206,14 +208,12 @@ for epoch in range(100):
     warm_preds_valid = []
     print('--training begins--')
     model.train()
-
     for input_par, inds, labels_comp, labels_warm in traindata:
         input_sti = torch.tensor([])
         for inde in inds:
             input_sti = torch.cat((input_sti, feats_sti[inde]), 0)
         input_par = input_par.reshape(input_par.shape[0], 1, input_par.shape[1])
-        input_sti = input_sti.reshape(input_par.shape[0], 1, -1)
-    
+        input_sti = input_sti.reshape(input_par.shape[0], 1, -1)    
         # loss
         preds_comp, preds_warm = model(input_par, input_sti)
         train_loss_comp = func(preds_comp.squeeze(), labels_comp)
@@ -224,13 +224,13 @@ for epoch in range(100):
             comp_preds_train.append(i.item())
         for i in preds_warm:
             warm_preds_train.append(i.item())
-
         # backprop
         optimizer.zero_grad()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         train_loss = 0.5*train_loss_comp + 0.5*train_loss_warm
         train_loss.backward()
         optimizer.step()
+
     print('--training ends--')
 
     # validation
@@ -264,12 +264,12 @@ for epoch in range(100):
     train_ccc_warm = concordance_cc(warm_preds_train, warm_train)
     valid_ccc_comp = concordance_cc(comp_preds_valid, comp_valid)
     valid_ccc_warm = concordance_cc(warm_preds_valid, warm_valid)
-
+    
     train_loss_comp = sum(comp_loss_list_train) / len(comp_loss_list_train)
     train_loss_warm = sum(warm_loss_list_train) / len(warm_loss_list_train)
     valid_loss_comp = sum(comp_loss_list_valid) / len(comp_loss_list_valid)
     valid_loss_warm = sum(warm_loss_list_valid) / len(warm_loss_list_valid)
-
+        
     print('train_loss_comp: %.4f' % train_loss_comp, '|train_ccc_comp: %.4f' % train_ccc_comp, '\n'
           'train_loss_warm: %.4f' % train_loss_warm, '|train_ccc_warm: %.4f' % train_ccc_warm, '\n'
           'valid_loss_comp: %.4f' % valid_loss_comp, '|valid_ccc_comp: %.4f' % valid_ccc_comp, '\n'
@@ -279,6 +279,7 @@ for epoch in range(100):
 
     stop = timeit.default_timer()
     print('Time: ', stop - start)
+    scheduler.step()
     
     
 # # training
