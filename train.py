@@ -54,18 +54,6 @@ comp = np.array(comp, dtype=float)
 warm = np.array(warm, dtype=float)
 ind = np.array(ind, dtype=int)
 
-# range_comp = max(comp) - min(comp) + 1
-# range_warm = max(warm) - min(warm) + 1
-# print(range_comp, range_warm)
-
-## separation for test data
-# feats_par = np.array(feats_par)
-# feats_test = np.array(feats_par[44922:])
-# comp_train_valid = np.array(comp)
-# comp_test = np.array(comp[44922:])
-# warm_train_valid = np.array(warm)
-# warm_test = np.array(warm[44922:])
-
 torch.manual_seed(1)
 
 # shuffle data
@@ -159,21 +147,24 @@ class NeuralNet(nn.Module):
         warm = self.out(x_co)
         return comp, warm, loss_sim1, loss_sim2
 
-
 model = NeuralNet()
 model = model.to(torch.float64)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=25, gamma=0.5)
+scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
 func = nn.MSELoss()
+kl_func = nn.KLDivLoss(reduction='batchmean')
+
 
 # training
-for epoch in range(100):
+for epoch in range(60):
     start = timeit.default_timer()
     print("-----epoch: ", epoch, "-----")
     comp_loss_list_train = []
     comp_loss_list_valid = []
     warm_loss_list_train = []
     warm_loss_list_valid = []
+    cross_loss_list_train = []
+    cross_loss_list_valid = []  
     comp_preds_train = []
     comp_preds_valid = []
     warm_preds_train = []
@@ -187,22 +178,23 @@ for epoch in range(100):
         input_par = input_par.reshape(input_par.shape[0], 1, input_par.shape[1])
         input_sti = input_sti.reshape(input_par.shape[0], 1, -1)    
         # loss
-        preds_comp, preds_warm = model(input_par, input_sti)
+        preds_comp, preds_warm, loss_sim1, loss_sim2 = model(input_par, input_sti)
         train_loss_comp = func(preds_comp.squeeze(), labels_comp)
         train_loss_warm = func(preds_warm.squeeze(), labels_warm)
+        train_cross_loss = loss_sim1 + loss_sim2
         comp_loss_list_train.append(train_loss_comp.item())
         warm_loss_list_train.append(train_loss_warm.item())
+        cross_loss_list_train.append(train_cross_loss.item())
         for i in preds_comp:
             comp_preds_train.append(i.item())
         for i in preds_warm:
-            warm_preds_train.append(i.item())
+            warm_preds_train.append(i.item())           
         # backprop
         optimizer.zero_grad()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        train_loss = 0.5*train_loss_comp + 0.5*train_loss_warm
+        train_loss = 0.4*train_loss_comp + 0.4*train_loss_warm + 0.2*train_cross_loss
         train_loss.backward()
         optimizer.step()
-
     print('--training ends--')
 
     # validation
@@ -216,16 +208,18 @@ for epoch in range(100):
         input_par = input_par.reshape(input_par.shape[0], 1, input_par.shape[1])
         input_sti = input_sti.reshape(input_par.shape[0], 1, -1)
         # loss
-        preds_comp, preds_warm = model(input_par, input_sti)
+        preds_comp, preds_warm, loss_sim1, loss_sim2 = model(input_par, input_sti)
         valid_loss_comp = func(preds_comp.squeeze(), labels_comp)
         valid_loss_warm = func(preds_warm.squeeze(), labels_warm)
+        valid_cross_loss =  loss_sim1 + loss_sim2
         comp_loss_list_valid.append(valid_loss_comp.item())
         warm_loss_list_valid.append(valid_loss_warm.item())
+        cross_loss_list_valid.append(valid_cross_loss.item())
         for i in preds_comp:
             comp_preds_valid.append(i.item())
         for i in preds_warm:
             warm_preds_valid.append(i.item())
-
+            
     # compute performance for each epoch
     comp_preds_train = torch.tensor(comp_preds_train)
     warm_preds_train = torch.tensor(warm_preds_train)
@@ -236,22 +230,27 @@ for epoch in range(100):
     train_ccc_warm = concordance_cc(warm_preds_train, warm_train)
     valid_ccc_comp = concordance_cc(comp_preds_valid, comp_valid)
     valid_ccc_warm = concordance_cc(warm_preds_valid, warm_valid)
-    
+
     train_loss_comp = sum(comp_loss_list_train) / len(comp_loss_list_train)
     train_loss_warm = sum(warm_loss_list_train) / len(warm_loss_list_train)
     valid_loss_comp = sum(comp_loss_list_valid) / len(comp_loss_list_valid)
     valid_loss_warm = sum(warm_loss_list_valid) / len(warm_loss_list_valid)
+    train_loss_cross = sum(cross_loss_list_train) / len(cross_loss_list_train)
+    valid_loss_cross = sum(cross_loss_list_valid) / len(cross_loss_list_valid)
+
         
     print('train_loss_comp: %.4f' % train_loss_comp, '|train_ccc_comp: %.4f' % train_ccc_comp, '\n'
           'train_loss_warm: %.4f' % train_loss_warm, '|train_ccc_warm: %.4f' % train_ccc_warm, '\n'
           'valid_loss_comp: %.4f' % valid_loss_comp, '|valid_ccc_comp: %.4f' % valid_ccc_comp, '\n'
-          'valid_loss_warm: %.4f' % valid_loss_warm, '|valid_ccc_warm: %.4f' % valid_ccc_warm)
+          'valid_loss_warm: %.4f' % valid_loss_warm, '|valid_ccc_warm: %.4f' % valid_ccc_warm, '\n'
+          'train_loss_cross: %.4f' % train_loss_cross, '|valid_loss_cross: %.4f' % valid_loss_cross)
 
     print('---validation ends---')
 
     stop = timeit.default_timer()
     print('Time: ', stop - start)
     scheduler.step()
+
     
     
 # # training
