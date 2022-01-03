@@ -112,44 +112,10 @@ validdata = DataLoader(dataset=validset, batch_size=64, shuffle=False)
 
 print('Data preparation completed!')
 
-
 # model
 class NeuralNet(nn.Module):
     def __init__(self):
         super(NeuralNet, self).__init__()
-        self.conv1 = nn.Sequential(
-            nn.Conv1d(in_channels=len(feats_par[0]),
-                      out_channels=64,
-                      kernel_size=3,
-                      stride=1,
-                      padding=1),
-            # nn.BatchNorm1d(16),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=64,
-                      out_channels=64,
-                      kernel_size=3,
-                      stride=1,
-                      padding=1),
-            nn.ReLU(),
-            nn.MaxPool1d(kernel_size=2)
-        )
-        self.conv2 = nn.Sequential(
-            nn.Conv1d(in_channels=len(feats_sti[0]),
-                      out_channels=64,
-                      kernel_size=3,
-                      stride=1,
-                      padding=1),
-            # nn.BatchNorm1d(16),
-            nn.ReLU(),
-            nn.Conv1d(in_channels=64,
-                      out_channels=64,
-                      kernel_size=3,
-                      stride=1,
-                      padding=1),
-            nn.ReLU(),
-            nn.MaxPool1d(kernel_size=2)
-        )
-
         self.lstm1 = nn.LSTM(input_size=len(feats_par[0]),
                             hidden_size=64,
                             num_layers=2,
@@ -177,16 +143,22 @@ class NeuralNet(nn.Module):
         x_sti, _ = self.attn(x_sti, x_sti, x_sti)
         x_par_sti, _ = self.attn(x_par, x_sti, x_sti)
         x_sti_par, _ = self.attn(x_sti, x_par, x_par)
+        # distillation mse loss
+        loss_sim1 = func(x_sti_par, x_par)
+        loss_sim2 = func(x_par_sti, x_sti)
+        # distillation kl loss
+#         loss_dis1 = kl_func(nn.functional.log_softmax(x_par, 0), nn.functional.softmax(x_sti_par, 0))
+#         loss_dis2 = kl_func(nn.functional.log_softmax(x_sti, 0), nn.functional.softmax(x_par_sti, 0))
         # concatenation
         x_co = torch.cat((x_par, x_sti, x_par_sti, x_sti_par), 1)
-#         x_co = x_co.view(x_co.size(0), -1)
         x_co = x_co.mean(dim=1)  # pooling
         x_co = self.dense(x_co)
         x_co = self.acti(x_co)
         x_co = self.drop(x_co)
         comp = self.out(x_co)
         warm = self.out(x_co)
-        return comp, warm
+        return comp, warm, loss_sim1, loss_sim2
+
 
 model = NeuralNet()
 model = model.to(torch.float64)
