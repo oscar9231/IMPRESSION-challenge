@@ -6,7 +6,7 @@ The feature processing consists of 2 steps: resampling and extraction.
 
 For the sample numbers that can be divided by integer, decimate function is applied on the features.
 
-For the sample number that cannot, decimate function is first applied to downsample the features so that the number of features approximates the number of labels. Then FFT transformation is applied to downsample the features.
+For the sample number that cannot, decimate function is first applied to downsample the features so that the number of features approximates the number of labels. Then FFT is applied to downsample the features.
 
 *exception*:
 For participant's eye features, the first row is first removed then decimate function is applied, since the first row is basically 0. By removing one row, the sample number is the same as that in the user manual and can be divided by integer.
