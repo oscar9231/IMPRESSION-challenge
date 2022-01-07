@@ -78,6 +78,8 @@ feats_train -= np.mean(feats_train, axis = 0)
 feats_train /= (np.std(feats_train, axis = 0) + 0.001)
 feats_valid -= np.mean(feats_valid, axis = 0)
 feats_valid /= (np.std(feats_valid, axis = 0) + 0.001)
+feats_sti -= np.mean(feats_sti, axis = 0)
+feats_sti /= (np.std(feats_sti, axis = 0) + 0.001)
 
 feats_train = torch.from_numpy(feats_train)
 feats_valid = torch.from_numpy(feats_valid)
@@ -131,12 +133,12 @@ class NeuralNet(nn.Module):
         x_sti, _ = self.attn(x_sti, x_sti, x_sti)
         x_par_sti, _ = self.attn(x_par, x_sti, x_sti)
         x_sti_par, _ = self.attn(x_sti, x_par, x_par)
-        # distillation mse loss
-        loss_sim1 = func(x_sti_par, x_par)
-        loss_sim2 = func(x_par_sti, x_sti)
-        # distillation kl loss
-#         loss_dis1 = kl_func(nn.functional.log_softmax(x_par, 0), nn.functional.softmax(x_sti_par, 0))
-#         loss_dis2 = kl_func(nn.functional.log_softmax(x_sti, 0), nn.functional.softmax(x_par_sti, 0))
+        # distillation loss
+        loss_dis1 = func(x_par_sti, x_par)
+        loss_dis2 = func(x_sti_par, x_sti)
+        # similarity loss
+        loss_sim1 = kl_func(nn.functional.log_softmax(x_par_sti, 0), nn.functional.softmax(x_par, 0))
+        loss_sim2 = kl_func(nn.functional.log_softmax(x_sti_par, 0), nn.functional.softmax(x_sti, 0))
         # concatenation
         x_co = torch.cat((x_par, x_sti, x_par_sti, x_sti_par), 1)
         x_co = x_co.mean(dim=1)  # pooling
@@ -145,7 +147,7 @@ class NeuralNet(nn.Module):
         x_co = self.drop(x_co)
         comp = self.out(x_co)
         warm = self.out(x_co)
-        return comp, warm, loss_sim1, loss_sim2
+        return comp, warm, loss_dis1, loss_dis2, loss_sim1, loss_sim2
 
 model = NeuralNet()
 model = model.to(torch.float64)
@@ -153,7 +155,6 @@ optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
 func = nn.MSELoss()
 kl_func = nn.KLDivLoss(reduction='batchmean')
-
 
 # training
 for epoch in range(60):
@@ -250,70 +251,3 @@ for epoch in range(60):
     stop = timeit.default_timer()
     print('Time: ', stop - start)
     scheduler.step()
-
-    
-    
-# # training
-# epoch = 100
-# batch_size = 64
-
-# while epoch < epochs:
-#     start = timeit.default_timer()
-#     print("-----epoch: ", epoch, "-----")
-#     comp_loss_list_train = []
-#     comp_loss_list_valid = []
-#     warm_loss_list_train = []
-#     warm_loss_list_valid = []
-#     comp_preds_train = []
-#     comp_preds_valid = []
-#     warm_preds_train = []
-#     warm_preds_valid = []
-
-#     print('--training begins--')
-#     model.train()
-#     j = 0
-#     while j < len(feats_train) / batch_size:
-#         # input_phy = []
-#         input_sti = torch.tensor([])
-#         if (j + 1) * batch_size > len(feats_train):
-#             input_par = feats_train[j * batch_size:]
-#             labels_comp = comp_train[j * batch_size:]
-#             labels_warm = warm_train[j * batch_size:]
-#             ind_fusion = ind_train[j * batch_size:]
-#         else:
-#             input_par = feats_train[j * batch_size:(j + 1) * batch_size]
-#             labels_comp = comp_train[j * batch_size:(j + 1) * batch_size]
-#             labels_warm = warm_train[j * batch_size:(j + 1) * batch_size]
-#             ind_fusion = ind_train[j * batch_size:(j + 1) * batch_size]
-#         for inde in ind_fusion:
-#             input_sti = torch.cat((input_sti, feats_sti[inde]), 0)
-#             # input_par.append(feats_sti[ind])
-#             # input_par.append(row[:-10])
-#             # input_phy.append(row[-10:-1])
-#         input_par = torch.tensor(input_par).reshape(input_par.shape[0], 1, input_par.shape[1])
-#         input_sti = torch.tensor(input_sti).reshape(input_par.shape[0], 1, -1)
-#         print(input_par.size(), input_sti.size())
-
-#         # loss
-#         preds_comp, preds_warm = model(input_par, input_sti)
-# #         print(preds_comp.detach(), preds_warm.detach())
-#         train_loss_comp = func(preds_comp, torch.tensor(labels_comp))
-#         train_loss_warm = func(preds_warm, torch.tensor(labels_warm))
-#         comp_loss_list_train.append(train_loss_comp.item())
-#         warm_loss_list_train.append(train_loss_warm.item())
-#         for i in preds_comp:
-#             comp_preds_train.append(i.detach().numpy())
-#         for i in preds_warm:
-#             warm_preds_train.append(i.detach().numpy())
-#         j += 1
-
-#         # backprop
-#         optimizer.zero_grad()
-#         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-#         train_loss = 0.5*train_loss_comp + 0.5*train_loss_warm
-# #         print(j, train_loss.item())
-#         train_loss.backward()
-#         optimizer.step()
-#         # torch.cuda.empty_cache()
-
-#     print('--training ends--')
