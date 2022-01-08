@@ -117,7 +117,8 @@ class NeuralNet(nn.Module):
                             batch_first=True,
                             bidirectional=True)
         self.attn = nn.MultiheadAttention(128, 8, batch_first=True)
-        self.dense = nn.Linear(128, 16)
+        self.dense = nn.Linear(128, 64)
+        self.dense2 = nn.Linear(64, 16)
         self.acti = nn.ReLU()
         self.drop = nn.Dropout(p=0.5)
         self.out = nn.Linear(16, 1)
@@ -133,6 +134,11 @@ class NeuralNet(nn.Module):
         x_sti, _ = self.attn(x_sti, x_sti, x_sti)
         x_par_sti, _ = self.attn(x_par, x_sti, x_sti)
         x_sti_par, _ = self.attn(x_sti, x_par, x_par)
+        # FC
+        x_par = self.dense(x_par)
+        x_sti = self.dense(x_sti)
+        x_par_sti = self.dense(x_par_sti)
+        x_sti_par = self.dense(x_sti_par)
         # distillation loss
         loss_dis1 = func(x_par_sti, x_par)
         loss_dis2 = func(x_sti_par, x_sti)
@@ -142,7 +148,7 @@ class NeuralNet(nn.Module):
         # concatenation
         x_co = torch.cat((x_par, x_sti, x_par_sti, x_sti_par), 1)
         x_co = x_co.mean(dim=1)  # pooling
-        x_co = self.dense(x_co)
+        x_co = self.dense2(x_co)
         x_co = self.acti(x_co)
         x_co = self.drop(x_co)
         comp = self.out(x_co)
@@ -157,7 +163,7 @@ func = nn.MSELoss()
 kl_func = nn.KLDivLoss(reduction='batchmean')
 
 # training
-for epoch in range(60):
+for epoch in range(50):
     start = timeit.default_timer()
     print("-----epoch: ", epoch, "-----")
     comp_loss_list_train = []
@@ -165,7 +171,7 @@ for epoch in range(60):
     warm_loss_list_train = []
     warm_loss_list_valid = []
     cross_loss_list_train = []
-    cross_loss_list_valid = []  
+    cross_loss_list_valid = []
     comp_preds_train = []
     comp_preds_valid = []
     warm_preds_train = []
@@ -179,21 +185,21 @@ for epoch in range(60):
         input_par = input_par.reshape(input_par.shape[0], 1, input_par.shape[1])
         input_sti = input_sti.reshape(input_par.shape[0], 1, -1)    
         # loss
-        preds_comp, preds_warm, loss_sim1, loss_sim2 = model(input_par, input_sti)
+        preds_comp, preds_warm, loss_dis1, loss_dis2, loss_sim1, loss_sim2 = model(input_par, input_sti)
         train_loss_comp = func(preds_comp.squeeze(), labels_comp)
         train_loss_warm = func(preds_warm.squeeze(), labels_warm)
-        train_cross_loss = loss_sim1 + loss_sim2
+        train_cross_loss = loss_dis1 + loss_dis2 + loss_sim1 + loss_sim2
         comp_loss_list_train.append(train_loss_comp.item())
         warm_loss_list_train.append(train_loss_warm.item())
         cross_loss_list_train.append(train_cross_loss.item())
         for i in preds_comp:
             comp_preds_train.append(i.item())
         for i in preds_warm:
-            warm_preds_train.append(i.item())           
+            warm_preds_train.append(i.item())
         # backprop
         optimizer.zero_grad()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        train_loss = 0.4*train_loss_comp + 0.4*train_loss_warm + 0.2*train_cross_loss
+        train_loss = train_loss_comp + train_loss_warm + train_cross_loss
         train_loss.backward()
         optimizer.step()
     print('--training ends--')
@@ -209,10 +215,10 @@ for epoch in range(60):
         input_par = input_par.reshape(input_par.shape[0], 1, input_par.shape[1])
         input_sti = input_sti.reshape(input_par.shape[0], 1, -1)
         # loss
-        preds_comp, preds_warm, loss_sim1, loss_sim2 = model(input_par, input_sti)
+        preds_comp, preds_warm, loss_dis1, loss_dis2, loss_sim1, loss_sim2 = model(input_par, input_sti)
         valid_loss_comp = func(preds_comp.squeeze(), labels_comp)
         valid_loss_warm = func(preds_warm.squeeze(), labels_warm)
-        valid_cross_loss =  loss_sim1 + loss_sim2
+        valid_cross_loss = loss_dis1 + loss_dis2 + loss_sim1 + loss_sim2
         comp_loss_list_valid.append(valid_loss_comp.item())
         warm_loss_list_valid.append(valid_loss_warm.item())
         cross_loss_list_valid.append(valid_cross_loss.item())
