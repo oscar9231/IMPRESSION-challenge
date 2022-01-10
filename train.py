@@ -143,8 +143,8 @@ class NeuralNet(nn.Module):
         loss_dis1 = func(x_par_sti, x_par)
         loss_dis2 = func(x_sti_par, x_sti)
         # similarity loss
-        loss_sim1 = kl_func(nn.functional.log_softmax(x_par_sti, 0), nn.functional.softmax(x_par, 0))
-        loss_sim2 = kl_func(nn.functional.log_softmax(x_sti_par, 0), nn.functional.softmax(x_sti, 0))
+        loss_sim1 = kl_func(nn.functional.log_softmax(x_sti_par, 0), nn.functional.softmax(x_par, 0))
+        loss_sim2 = kl_func(nn.functional.log_softmax(x_par_sti, 0), nn.functional.softmax(x_sti, 0))
         # concatenation
         x_co = torch.cat((x_par, x_sti, x_par_sti, x_sti_par), 1)
         x_co = x_co.mean(dim=1)  # pooling
