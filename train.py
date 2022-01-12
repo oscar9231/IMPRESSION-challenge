@@ -16,7 +16,6 @@ with open('/Users/liyuanchao/Documents/Corpus/IMPRESSION/feats_labels/feats_stim
     feats_sti = list(file_content)
 
 feats_par = []
-# feats_phy = []
 ind = []
 comp = []
 warm = []
@@ -44,10 +43,6 @@ for file in range(40):
             comp.append(row[0])
             warm.append(row[1])
 
-# print(len(feats_par), len(feats_par[0]))
-# print(len(feats_sti), len(feats_sti[0]))
-# print(len(comp), len(comp[0]))
-
 feats_par = np.array(feats_par, dtype=float)
 feats_sti = np.array(feats_sti, dtype=float)
 comp = np.array(comp, dtype=float)
@@ -65,12 +60,12 @@ comp[np.arange(leng)] = comp[indices]
 warm[np.arange(leng)] = warm[indices]
 
 # separate training and validation data
-feats_train = feats_par[:int(0.8*leng)]
-feats_valid = feats_par[int(0.8*leng):]
-comp_train = comp[:int(0.8*leng)]
-comp_valid = comp[int(0.8*leng):]
-warm_train = warm[:int(0.8*leng)]
-warm_valid = warm[int(0.8*leng):]
+feats_train = feats_par[:int(0.1*leng)]
+feats_valid = feats_par[int(0.1*leng):int(0.12*leng)]
+comp_train = comp[:int(0.1*leng)]
+comp_valid = comp[int(0.1*leng):int(0.12*leng)]
+warm_train = warm[:int(0.1*leng)]
+warm_valid = warm[int(0.1*leng):int(0.12*leng)]
 
 # normalization
 np.seterr(divide='ignore', invalid='ignore') # avoid "divide by zero" or "divide by NaN"
@@ -116,11 +111,11 @@ class NeuralNet(nn.Module):
                             num_layers=2,
                             batch_first=True,
                             bidirectional=True)
-        self.attn = nn.MultiheadAttention(128, 8, batch_first=True)
+        self.attn = nn.MultiheadAttention(128, 16, batch_first=True)
+        self.drop = nn.Dropout(p=0.5)
         self.dense = nn.Linear(128, 64)
         self.dense2 = nn.Linear(64, 16)
         self.acti = nn.ReLU()
-        self.drop = nn.Dropout(p=0.5)
         self.out = nn.Linear(16, 1)
 
     def forward(self, input_par, input_sti):
@@ -134,23 +129,18 @@ class NeuralNet(nn.Module):
         x_sti, _ = self.attn(x_sti, x_sti, x_sti)
         x_par_sti, _ = self.attn(x_par, x_sti, x_sti)
         x_sti_par, _ = self.attn(x_sti, x_par, x_par)
-        # FC
-        x_par = self.dense(x_par)
-        x_sti = self.dense(x_sti)
-        x_par_sti = self.dense(x_par_sti)
-        x_sti_par = self.dense(x_sti_par)
         # distillation loss
-        loss_dis1 = func(x_par_sti, x_par)
-        loss_dis2 = func(x_sti_par, x_sti)
+        loss_dis1 = func(x_par, x_sti)
+        loss_dis2 = func(x_sti, x_par)
         # similarity loss
-        loss_sim1 = kl_func(nn.functional.log_softmax(x_sti_par, 0), nn.functional.softmax(x_par, 0))
-        loss_sim2 = kl_func(nn.functional.log_softmax(x_par_sti, 0), nn.functional.softmax(x_sti, 0))
+        loss_sim1 = kl_func(nn.functional.log_softmax(x_par_sti, 0), nn.functional.softmax(x_par, 0))
+        loss_sim2 = kl_func(nn.functional.log_softmax(x_sti_par, 0), nn.functional.softmax(x_sti, 0))
         # concatenation
         x_co = torch.cat((x_par, x_sti, x_par_sti, x_sti_par), 1)
-        x_co = x_co.mean(dim=1)  # pooling
-        x_co = self.dense2(x_co)
-        x_co = self.acti(x_co)
         x_co = self.drop(x_co)
+        x_co = x_co.mean(dim=1)  # pooling
+        x_co = self.dense(x_co)
+        x_co = self.acti(x_co)
         comp = self.out(x_co)
         warm = self.out(x_co)
         return comp, warm, loss_dis1, loss_dis2, loss_sim1, loss_sim2
@@ -162,6 +152,13 @@ scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.5)
 func = nn.MSELoss()
 kl_func = nn.KLDivLoss(reduction='batchmean')
 
+cross_loss_train = []
+sim_loss_train = []
+dis_loss_train = []
+cross_loss_valid = []
+sim_loss_valid = []
+dis_loss_valid = []
+
 # training
 for epoch in range(50):
     start = timeit.default_timer()
@@ -172,6 +169,10 @@ for epoch in range(50):
     warm_loss_list_valid = []
     cross_loss_list_train = []
     cross_loss_list_valid = []
+    sim_loss_list_train = []
+    sim_loss_list_valid = []
+    dis_loss_list_train = []
+    dis_loss_list_valid = []
     comp_preds_train = []
     comp_preds_valid = []
     warm_preds_train = []
@@ -188,10 +189,14 @@ for epoch in range(50):
         preds_comp, preds_warm, loss_dis1, loss_dis2, loss_sim1, loss_sim2 = model(input_par, input_sti)
         train_loss_comp = func(preds_comp.squeeze(), labels_comp)
         train_loss_warm = func(preds_warm.squeeze(), labels_warm)
-        train_cross_loss = loss_dis1 + loss_dis2 + loss_sim1 + loss_sim2
+        loss_sim = loss_sim1 + loss_sim2
+        loss_dis = loss_dis1 + loss_dis2
+        train_cross_loss = loss_dis + loss_sim
         comp_loss_list_train.append(train_loss_comp.item())
         warm_loss_list_train.append(train_loss_warm.item())
         cross_loss_list_train.append(train_cross_loss.item())
+        sim_loss_list_train.append(loss_sim.item())
+        dis_loss_list_train.append(loss_dis.item())
         for i in preds_comp:
             comp_preds_train.append(i.item())
         for i in preds_warm:
@@ -204,7 +209,7 @@ for epoch in range(50):
         optimizer.step()
     print('--training ends--')
 
-    # validation
+#     # validation
     print('--validation begins--')
     model.eval()
     input_par = feats_valid
@@ -218,10 +223,14 @@ for epoch in range(50):
         preds_comp, preds_warm, loss_dis1, loss_dis2, loss_sim1, loss_sim2 = model(input_par, input_sti)
         valid_loss_comp = func(preds_comp.squeeze(), labels_comp)
         valid_loss_warm = func(preds_warm.squeeze(), labels_warm)
-        valid_cross_loss = loss_dis1 + loss_dis2 + loss_sim1 + loss_sim2
+        loss_sim = loss_sim1 + loss_sim2
+        loss_dis = loss_dis1 + loss_dis2
+        valid_cross_loss = loss_dis + loss_sim
         comp_loss_list_valid.append(valid_loss_comp.item())
         warm_loss_list_valid.append(valid_loss_warm.item())
         cross_loss_list_valid.append(valid_cross_loss.item())
+        sim_loss_list_valid.append(loss_sim.item())
+        dis_loss_list_valid.append(loss_dis.item())
         for i in preds_comp:
             comp_preds_valid.append(i.item())
         for i in preds_warm:
@@ -244,13 +253,25 @@ for epoch in range(50):
     valid_loss_warm = sum(warm_loss_list_valid) / len(warm_loss_list_valid)
     train_loss_cross = sum(cross_loss_list_train) / len(cross_loss_list_train)
     valid_loss_cross = sum(cross_loss_list_valid) / len(cross_loss_list_valid)
-
+    train_loss_sim = sum(sim_loss_list_train) / len(sim_loss_list_train)
+    train_loss_dis = sum(dis_loss_list_train) / len(dis_loss_list_train)
+    valid_loss_sim = sum(sim_loss_list_valid) / len(sim_loss_list_valid)
+    valid_loss_dis = sum(dis_loss_list_valid) / len(dis_loss_list_valid)
+    
+    cross_loss_train.append(train_loss_cross)
+    sim_loss_train.append(train_loss_sim)
+    dis_loss_train.append(train_loss_dis)
+    cross_loss_valid.append(valid_loss_cross)
+    sim_loss_valid.append(valid_loss_sim)
+    dis_loss_valid.append(valid_loss_dis)
         
     print('train_loss_comp: %.4f' % train_loss_comp, '|train_ccc_comp: %.4f' % train_ccc_comp, '\n'
           'train_loss_warm: %.4f' % train_loss_warm, '|train_ccc_warm: %.4f' % train_ccc_warm, '\n'
           'valid_loss_comp: %.4f' % valid_loss_comp, '|valid_ccc_comp: %.4f' % valid_ccc_comp, '\n'
           'valid_loss_warm: %.4f' % valid_loss_warm, '|valid_ccc_warm: %.4f' % valid_ccc_warm, '\n'
-          'train_loss_cross: %.4f' % train_loss_cross, '|valid_loss_cross: %.4f' % valid_loss_cross)
+          'train_loss_cross: %.4f' % train_loss_cross, '|valid_loss_cross: %.4f' % valid_loss_cross, '\n'
+          'train_loss_sim: %.4f' % train_loss_sim, '|valid_loss_sim: %.4f' % valid_loss_sim, '\n'
+          'train_loss_dis: %.4f' % train_loss_dis, '|valid_loss_dis: %.4f' % valid_loss_dis)
 
     print('---validation ends---')
 
