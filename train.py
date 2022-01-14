@@ -6,6 +6,7 @@ import timeit
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
+import matplotlib.pyplot as plt
 from audtorch.metrics.functional import concordance_cc
 from torch.utils.data import TensorDataset, DataLoader
 
@@ -58,6 +59,7 @@ random.shuffle(indices)
 feats_par[np.arange(leng)] = feats_par[indices]
 comp[np.arange(leng)] = comp[indices]
 warm[np.arange(leng)] = warm[indices]
+ind[np.arange(leng)] = ind[indices]
 
 # separate training and validation data
 feats_train = feats_par[:int(0.1*leng)]
@@ -66,9 +68,10 @@ comp_train = comp[:int(0.1*leng)]
 comp_valid = comp[int(0.1*leng):int(0.12*leng)]
 warm_train = warm[:int(0.1*leng)]
 warm_valid = warm[int(0.1*leng):int(0.12*leng)]
+ind_train = ind[:int(0.1*leng)]
+ind_valid = ind[int(0.1*leng):int(0.12*leng)]
 
 # normalization
-np.seterr(divide='ignore', invalid='ignore') # avoid "divide by zero" or "divide by NaN"
 feats_train -= np.mean(feats_train, axis = 0)
 feats_train /= (np.std(feats_train, axis = 0) + 0.001)
 feats_valid -= np.mean(feats_valid, axis = 0)
@@ -113,8 +116,7 @@ class NeuralNet(nn.Module):
                             bidirectional=True)
         self.attn = nn.MultiheadAttention(128, 16, batch_first=True)
         self.drop = nn.Dropout(p=0.5)
-        self.dense = nn.Linear(128, 64)
-        self.dense2 = nn.Linear(64, 16)
+        self.dense = nn.Linear(128, 16)
         self.acti = nn.ReLU()
         self.out = nn.Linear(16, 1)
 
@@ -129,12 +131,14 @@ class NeuralNet(nn.Module):
         x_sti, _ = self.attn(x_sti, x_sti, x_sti)
         x_par_sti, _ = self.attn(x_par, x_sti, x_sti)
         x_sti_par, _ = self.attn(x_sti, x_par, x_par)
+
         # distillation loss
         loss_dis1 = func(x_par, x_sti)
         loss_dis2 = func(x_sti, x_par)
         # similarity loss
         loss_sim1 = kl_func(nn.functional.log_softmax(x_par_sti, 0), nn.functional.softmax(x_par, 0))
         loss_sim2 = kl_func(nn.functional.log_softmax(x_sti_par, 0), nn.functional.softmax(x_sti, 0))
+
         # concatenation
         x_co = torch.cat((x_par, x_sti, x_par_sti, x_sti_par), 1)
         x_co = self.drop(x_co)
@@ -209,7 +213,7 @@ for epoch in range(50):
         optimizer.step()
     print('--training ends--')
 
-#     # validation
+# validation
     print('--validation begins--')
     model.eval()
     input_par = feats_valid
