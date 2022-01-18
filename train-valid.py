@@ -50,8 +50,6 @@ comp = np.array(comp, dtype=float)
 warm = np.array(warm, dtype=float)
 ind = np.array(ind, dtype=int)
 
-torch.manual_seed(1)
-
 # shuffle data
 leng = len(feats_par)
 indices = np.arange(leng)
@@ -149,6 +147,7 @@ class NeuralNet(nn.Module):
         warm = self.out(x_co)
         return comp, warm, loss_dis1, loss_dis2, loss_sim1, loss_sim2
 
+torch.manual_seed(1)
 model = NeuralNet()
 model = model.to(torch.float64)
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
