@@ -116,7 +116,8 @@ class NeuralNet(nn.Module):
         self.drop = nn.Dropout(p=0.5)
         self.dense = nn.Linear(128, 16)
         self.acti = nn.ReLU()
-        self.out = nn.Linear(16, 1)
+        self.out1 = nn.Linear(16, 1)
+        self.out2 = nn.Linear(16, 1)
 
     def forward(self, input_par, input_sti):
         # lstm
@@ -143,8 +144,8 @@ class NeuralNet(nn.Module):
         x_co = x_co.mean(dim=1)  # pooling
         x_co = self.dense(x_co)
         x_co = self.acti(x_co)
-        comp = self.out(x_co)
-        warm = self.out(x_co)
+        comp = self.out1(x_co)
+        warm = self.out2(x_co)
         return comp, warm, loss_dis1, loss_dis2, loss_sim1, loss_sim2
 
 torch.manual_seed(1)
